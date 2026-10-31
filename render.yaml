@@ -1,0 +1,14 @@
+# Render Blueprint. Python version comes from .python-version.
+# No healthCheckPath on purpose: GET / checks the database, and a short Neon outage
+# shouldn't make Render restart the app.
+services:
+  - type: web
+    name: transaction-webhook-service
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false # entered in the Render dashboard, never committed
