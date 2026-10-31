@@ -2,7 +2,7 @@
 
 Receives transaction webhooks from payment processors (like Razorpay), acknowledges them immediately with `202 Accepted`, and processes them reliably in the background (30-second simulated external call), storing the result in Postgres.
 
-**Live API:** _added after deployment_ · Interactive docs at `/docs`
+**Live API:** https://transaction-webhook-service-v4g2.onrender.com · Interactive docs at [`/docs`](https://transaction-webhook-service-v4g2.onrender.com/docs)
 
 ## Endpoints
 
@@ -42,7 +42,7 @@ sweeper (at startup + every 60s): finds PROCESSING rows nobody is working on ─
 
 **Trade-offs and limits**
 - After a crash, an in-flight transaction finishes after its lease expires (up to ~3.5 min instead of ~30s).
-- Render's free plan sleeps after 15 min idle, so an external pinger calls `GET /` every 10 minutes to keep it awake. The free plan also has 0.1 CPU; the smoke test below measures latency under load.
+- Render's free plan sleeps after 15 min idle, so an external pinger calls `GET /` every 10 minutes to keep it awake. The free plan also has only 0.1 CPU, which limits latency under large bursts (see [Results](#results-against-the-live-url)).
 - Webhook signatures aren't checked (the spec sends unsigned requests). For Razorpay, the endpoint would verify the `X-Razorpay-Signature` header: an HMAC-SHA256 of the raw request body with the webhook secret.
 
 ## Run locally
@@ -89,7 +89,35 @@ curl $BASE/
 python scripts/smoke_test.py $BASE
 ```
 
-Results against the live URL: _added after deployment_
+### Results against the live URL
+
+Run on 31 Oct 2026 from India, against the Render free plan in Singapore:
+
+```
+PASS  1a. Single: webhook returns 202  (219ms)
+PASS  1b. Single: PROCESSING right after
+PASS  2a. Duplicates: same webhook x15 -> all 202, only 1 accepted as new  (1 new)
+FAIL  3a. Performance: 50 at once under load -> all 202, p95 under 500ms  (p50 1055ms, p95 1715ms, max 1743ms)
+PASS  4a. Errors: bad body -> 422
+PASS  4b. Errors: unknown id -> 404
+PASS  1c. Single: PROCESSED after ~30s  (30s)
+PASS  2b. Duplicates: one transaction, PROCESSED once  (1 record(s))
+PASS  3b. Performance: all 50 PROCESSED too  (50/50)
+
+8/9 checks passed
+```
+
+**Latency by burst size.** Webhook response time as seen by the client, including the network round trip from India to Singapore:
+
+| Webhooks sent at once | p95 | Under 500 ms? |
+|---|---|---|
+| 1 | ~100–200 ms | yes |
+| 10 | 185 ms | yes |
+| 25 | 420 ms | yes |
+| 50, connections already open | 674 ms | no |
+| 50, new connections | 1728 ms | no |
+
+The 500 ms target is met up to about 25 simultaneous webhooks. Beyond that, the limit is the free plan's 0.1 CPU, not the design. Each request needs about 10 ms of that CPU, so a burst queues, and latency grows in line with the burst size. The 30-second background jobs don't add to it, because a waiting task uses no CPU. A paid instance (for example Render Starter, 0.5 CPU) would raise the limit with no code change.
 
 ## Project layout
 
